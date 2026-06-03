@@ -1,0 +1,35 @@
+# LATTE Configuration
+
+pipeline:
+  extractor: renpy
+  translator: google
+  applier: renpy
+
+source:
+  lang: en
+  target_lang: ru
+
+paths:
+  new: ./new_tl
+  old: ./old_tl
+  output: ./output
+  database: ./translations.db
+
+translator:
+  openai:
+    api_key: ""
+    base_url: ""
+    model: gpt-4-turbo-preview
+    temperature: 0.3
+    max_tokens: 4000
+    batch: 10
+    workers: 4
+    retries: 3
+    delay_min: 0.1
+    delay_max: 0.5
+    reasoning: false
+
+  google:
+    batch: 50
+    delay_min: 1.0
+    delay_max: 2.0
