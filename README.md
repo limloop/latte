@@ -231,6 +231,8 @@ class MyformatApplier(BaseApplier):
 
 </details>
 
+---
+
 Modular tool for game resource translation with AI support.
 
 ## Installation
