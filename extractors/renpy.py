@@ -60,6 +60,14 @@ class RenpyExtractor(BaseExtractor):
         
         return entries
     
+    def _translation(self, original: str, translation: str) -> str:
+        """Return translation only if it differs from original"""
+        if not translation:
+            return ''
+        if translation == original:
+            return ''
+        return translation
+
     def _parse_file(self, path: str) -> list:
         """Parse single file"""
         if not os.path.exists(path):
@@ -79,8 +87,8 @@ class RenpyExtractor(BaseExtractor):
                 i += 1
                 continue
             
-            # Skip source ref comments
-            if re.match(r'#\s*game/.+:\d+', line):
+            # Skip source ref comments and TODO
+            if re.match(r'#\s*(game/.+:\d+|TODO:)', line):
                 i += 1
                 continue
             
@@ -107,39 +115,49 @@ class RenpyExtractor(BaseExtractor):
                     if old and not self._is_vars(old):
                         entries.append({
                             'original': self._unescape(old),
-                            'translation': self._unescape(new) if new else '',
+                            'translation': self._translation(
+                                self._unescape(old), 
+                                self._unescape(new) if new else ''
+                            ),
                             'context': ''
                         })
                     i += 2
                     continue
             
-            # # name "text" / name "text"
+            # # name "text" / name "" или name "text"
             if line.startswith('# ') and '"' in line and not line.startswith('# "') and i + 1 < len(lines):
                 name = line[2:].split('"')[0].strip()
                 if name and re.match(r'^[a-zA-Z_]\w*$', name):
                     nxt = lines[i + 1].strip()
-                    if nxt.startswith(name + ' "') or nxt.startswith(name + '\t"'):
+                    # name "" (пустой перевод) или name "text" (перевод)
+                    if nxt.startswith(name + ' "') or nxt.startswith(name + '\t"') or nxt == name + ' ""' or nxt == name + '""':
                         old = self._q(line)
-                        new = self._q(nxt)
+                        new = self._q(nxt) if '"' in nxt else ''
                         if old and not self._is_vars(old):
                             entries.append({
                                 'original': self._unescape(old),
-                                'translation': self._unescape(new) if new else '',
+                                'translation': self._translation(
+                                    self._unescape(old), 
+                                    self._unescape(new) if new else ''
+                                ),
                                 'context': name
                             })
                         i += 2
                         continue
             
-            # # "text" / "text"
+            # # "text" / "" или "text"
             if line.startswith('# "') and i + 1 < len(lines):
                 nxt = lines[i + 1].strip()
-                if nxt.startswith('"') and not nxt.startswith('""'):
+                if nxt.startswith('"'):
                     old = self._q(line)
-                    new = self._q(nxt)
+                    new = self._q(nxt) if nxt != '""' else ''
                     if old and not self._is_vars(old):
                         entries.append({
                             'original': self._unescape(old),
-                            'translation': self._unescape(new) if new else '',
+                            'translation': self._translation(
+                                self._unescape(old), 
+                                self._unescape(new) if new else ''
+                            ),
                             'context': ''
                         })
                     i += 2
