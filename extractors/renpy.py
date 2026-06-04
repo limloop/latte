@@ -87,12 +87,10 @@ class RenpyExtractor(BaseExtractor):
                 i += 1
                 continue
             
-            # Skip source ref comments and TODO
             if re.match(r'#\s*(game/.+:\d+|TODO:)', line):
                 i += 1
                 continue
             
-            # Block header
             if line.startswith('translate '):
                 parts = line.split()
                 block = {
@@ -106,7 +104,7 @@ class RenpyExtractor(BaseExtractor):
                 i += 1
                 continue
             
-            # old/new
+            # === ПАТТЕРН 1: old "text" / new "text" (2 строки) ===
             if line.startswith('old "') and i + 1 < len(lines):
                 nxt = lines[i + 1].strip()
                 if nxt.startswith('new "'):
@@ -115,53 +113,104 @@ class RenpyExtractor(BaseExtractor):
                     if old and not self._is_vars(old):
                         entries.append({
                             'original': self._unescape(old),
-                            'translation': self._translation(
-                                self._unescape(old), 
-                                self._unescape(new) if new else ''
-                            ),
+                            'translation': self._translation(old, new),
                             'context': ''
                         })
                     i += 2
                     continue
             
-            # # name "text" / name "" или name "text"
-            if line.startswith('# ') and '"' in line and not line.startswith('# "') and i + 1 < len(lines):
-                name = line[2:].split('"')[0].strip()
-                if name and re.match(r'^[a-zA-Z_]\w*$', name):
-                    nxt = lines[i + 1].strip()
-                    # name "" (пустой перевод) или name "text" (перевод)
-                    if nxt.startswith(name + ' "') or nxt.startswith(name + '\t"') or nxt == name + ' ""' or nxt == name + '""':
+            # === ПАТТЕРН 2: # "text" / "" (2 строки, перевод пустой) ===
+            if (line.startswith('# "') and i + 1 < len(lines) and
+                not line.startswith('# "') == False):  # всегда true, для структуры
+                
+                nxt1 = lines[i + 1].strip()
+                
+                # 2 строки: # "text" + ""
+                if nxt1 == '""':
+                    old = self._q(line)
+                    if old and not self._is_vars(old):
+                        entries.append({
+                            'original': self._unescape(old),
+                            'translation': '',
+                            'context': ''
+                        })
+                    i += 2
+                    continue
+                
+                # 2 строки: # "text" + "translation"
+                if nxt1.startswith('"') and nxt1.endswith('"') and nxt1 != '""':
+                    old = self._q(line)
+                    new = self._q(nxt1)
+                    if old and not self._is_vars(old):
+                        entries.append({
+                            'original': self._unescape(old),
+                            'translation': self._translation(old, new),
+                            'context': ''
+                        })
+                    i += 2
+                    continue
+                
+                # 3 строки: # "text" + команда + ""
+                if i + 2 < len(lines):
+                    nxt2 = lines[i + 2].strip()
+                    if nxt2 == '""':
                         old = self._q(line)
-                        new = self._q(nxt) if '"' in nxt else ''
                         if old and not self._is_vars(old):
                             entries.append({
                                 'original': self._unescape(old),
-                                'translation': self._translation(
-                                    self._unescape(old), 
-                                    self._unescape(new) if new else ''
-                                ),
+                                'translation': '',
+                                'context': ''
+                            })
+                        i += 3
+                        continue
+                    
+                    # 3 строки: # "text" + команда + "translation"
+                    if nxt2.startswith('"') and nxt2.endswith('"') and nxt2 != '""':
+                        old = self._q(line)
+                        new = self._q(nxt2)
+                        if old and not self._is_vars(old):
+                            entries.append({
+                                'original': self._unescape(old),
+                                'translation': self._translation(old, new),
+                                'context': ''
+                            })
+                        i += 3
+                        continue
+            
+            # === ПАТТЕРН 3: # name "text" / name "" или name "text" (2-3 строки) ===
+            if line.startswith('# ') and '"' in line and not line.startswith('# "'):
+                name = line[2:].split('"')[0].strip()
+                
+                if name and re.match(r'^[a-zA-Z_]\w*$', name) and i + 1 < len(lines):
+                    nxt1 = lines[i + 1].strip()
+                    
+                    # 2 строки: # name "text" + name "" или name "text"
+                    if nxt1.startswith(name + ' "'):
+                        old = self._q(line)
+                        new = self._q(nxt1) if nxt1 != name + ' ""' else ''
+                        if old and not self._is_vars(old):
+                            entries.append({
+                                'original': self._unescape(old),
+                                'translation': self._translation(old, new),
                                 'context': name
                             })
                         i += 2
                         continue
-            
-            # # "text" / "" или "text"
-            if line.startswith('# "') and i + 1 < len(lines):
-                nxt = lines[i + 1].strip()
-                if nxt.startswith('"'):
-                    old = self._q(line)
-                    new = self._q(nxt) if nxt != '""' else ''
-                    if old and not self._is_vars(old):
-                        entries.append({
-                            'original': self._unescape(old),
-                            'translation': self._translation(
-                                self._unescape(old), 
-                                self._unescape(new) if new else ''
-                            ),
-                            'context': ''
-                        })
-                    i += 2
-                    continue
+                    
+                    # 3 строки: # name "text" + команда + name "" или name "text"
+                    if i + 2 < len(lines):
+                        nxt2 = lines[i + 2].strip()
+                        if nxt2.startswith(name + ' "'):
+                            old = self._q(line)
+                            new = self._q(nxt2) if nxt2 != name + ' ""' else ''
+                            if old and not self._is_vars(old):
+                                entries.append({
+                                    'original': self._unescape(old),
+                                    'translation': self._translation(old, new),
+                                    'context': name
+                                })
+                            i += 3
+                            continue
             
             i += 1
         
