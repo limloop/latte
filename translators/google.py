@@ -34,8 +34,8 @@ class GoogleTranslator_(BaseTranslator):
     def run(self, dry_run: bool = False, **kwargs) -> dict:
         print(f"\n{self.source_lang} → {self.target_lang}")
         print(f"Engine: Google Translate, Batch: {self.batch_size}")
-        print("⚠ Google Translate will break Ren'Py variables!")
-        print("  Strings with [var], {var}, %(var)s will be skipped.")
+        print("⚠ Google Translate will break special characters!")
+        print("  Strings with variables, HTML tags, or macros will be skipped.")
         
         s = self.db.stats()
         print(f"Untranslated: {s['untranslated']}")
@@ -61,20 +61,20 @@ class GoogleTranslator_(BaseTranslator):
             to_translate = []
             skipped = 0
             for e in untranslated:
-                if self._has_variables(e['original']):
+                if self._should_skip(e['original']):
                     skipped += 1
                 else:
                     to_translate.append(e)
             
             if skipped and not self._warned:
-                print(f"  Skipped {skipped} strings with variables (can't translate with Google)")
+                print(f"  Skipped {skipped} strings with special characters")
                 self._warned = True
             
             if not to_translate:
-                print("  All remaining strings contain variables. Nothing to translate.")
+                print("  All remaining strings contain special characters. Nothing to translate.")
                 break
             
-            print(f"\nRemaining: {len(to_translate)} (+ {skipped} with variables)")
+            print(f"\nRemaining: {len(to_translate)} (+ {skipped} skipped)")
             
             batches = [to_translate[i:i + self.batch_size]
                       for i in range(0, len(to_translate), self.batch_size)]
@@ -126,9 +126,35 @@ class GoogleTranslator_(BaseTranslator):
             return []
     
     @staticmethod
-    def _has_variables(text: str) -> bool:
-        """Check if text contains Ren'Py variables"""
-        return bool(re.search(r'\[.*?\]|\{.*?\}|%\(.*?\)[sd]', text))
+    def _should_skip(text: str) -> bool:
+        if not text:
+            return True
+        
+        # Ren'Py переменные
+        if re.search(r'\[.*?\]|\{.*?\}|%\(.*?\)[sd]', text):
+            return True
+        
+        # HTML теги
+        if re.search(r'</?[a-zA-Z][a-zA-Z0-9]*\b[^>]*>', text):
+            return True
+        
+        # SugarCube макросы
+        if re.search(r'<<.*?>>', text):
+            return True
+        
+        # Переменные $var
+        if re.search(r'\$[a-zA-Z_]\w*', text):
+            return True
+        
+        # JavaScript/CSS только в контексте кода
+        if re.search(r'\bfunction\s*\(', text): return True
+        if re.search(r'\bvar\s+\w+\s*=', text): return True
+        if re.search(r'\bconst\s+\w+\s*=', text): return True
+        if re.search(r'\blet\s+\w+\s*=', text): return True
+        if re.search(r'document\.\w+|window\.\w+', text): return True
+        if re.search(r'\.style\.\w+', text): return True
+        
+        return False
     
     @staticmethod
     def _valid(original: str, translation: str) -> bool:
