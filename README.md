@@ -1,9 +1,12 @@
 # LATTE - Language Asset Translation Toolkit Engine
 
-<details>
-<summary>🇷🇺 Нажмите, чтобы развернуть описание на русском</summary>
+Модульный инструмент для перевода игровых ресурсов с поддержкой AI.  
+Modular tool for game resource translation with AI support.
 
-Модульный инструмент для перевода игровых ресурсов с поддержкой AI.
+---
+
+<details>
+<summary>🇷🇺 Русский</summary>
 
 ## Установка
 
@@ -45,97 +48,90 @@ translator:
 ## Использование
 
 ```bash
-# Полный цикл
-python latte.py all
-
-# Отдельные этапы
-python latte.py extract -s ./new_tl -o ./old_tl
-python latte.py translate
-python latte.py apply -t ./output
-
-# Просмотр статистики
-python latte.py db stats
+python latte.py all                                    # Полный цикл
+python latte.py extract -s ./new_tl -o ./old_tl        # Извлечение строк
+python latte.py translate                              # Перевод
+python latte.py apply -t ./output                      # Сборка файлов
+python latte.py db stats                               # Статистика БД
 ```
 
-## Pipeline
+## Модули
 
-```mermaid
-flowchart TD
-    subgraph Extract
-        A[.rpy файлы] --> B[Парсер Ren'Py]
-        B --> C[Дедупликация]
-        B --> D[Пропуск переменных]
-        C --> E[(SQLite)]
-        D --> E
-    end
-    
-    subgraph Translate
-        E --> F{Есть непереведённые?}
-        F -->|Да| G[Формирование батчей]
-        G --> H[Параллельные запросы]
-        H --> I[AI / Google]
-        I --> J[Валидация]
-        J --> K[Сохранение в БД]
-        K --> F
-    end
-    
-    subgraph Apply
-        E --> L[Чтение переводов]
-        L --> M[Шаблоны .rpy]
-        M --> N[Подстановка переводов]
-        N --> O[Готовые .rpy]
-    end
-```
+### Экстракторы (Extractors)
 
-## Этапы
+Извлекают строки из исходных файлов и сохраняют в базу данных.
 
-### 1. EXTRACT — Извлечение строк
+| Модуль | Формат | Файлы | Контекст | Переменные | Старые переводы |
+|--------|--------|-------|----------|------------|-----------------|
+| `renpy` | Ren'Py .rpy | `.rpy` | Имя персонажа | Пропускает `[var]`, `{var}`, `%(var)s` | Merge по ключу `текст+контекст` |
+| `twine` | Twine/SugarCube | `.html` | Имя пассажа | Сохраняет `$var` в тексте | Не поддерживается |
 
-Парсит `.rpy` файлы и сохраняет строки в базу данных.
+**Ren'Py — поддерживаемые форматы:**
 
-**Форматы которые понимает парсер:**
+| Паттерн | Пример | Строк |
+|---------|--------|-------|
+| `old/new` | `old "text"` / `new "text"` | 2 |
+| Диалог | `# name "text"` / `name "text"` | 2 |
+| Диалог с командой | `# name "text"` / команда / `name "text"` | 3 |
+| Цитированный | `# "text"` / `"text"` | 2 |
+| Цитированный с командой | `# "text"` / команда / `"text"` | 3 |
 
-| Тип | Пример | Контекст |
-|-----|--------|----------|
-| `old/new` | `old "Start Game"` / `new ""` | — |
-| Диалоги | `# tara "Hello"` / `tara ""` | `tara` |
-| Строки | `# "Menu"` / `""` | — |
+**Twine — поддерживаемые форматы:**
 
-**Что делает:**
-- Извлекает оригинальный текст и перевод (если есть)
-- Сохраняет имя персонажа как контекст
-- Пропускает строки состоящие только из переменных (`[var]`, `{var}`)
-- Убирает дубликаты (одинаковый текст + контекст)
-- Если указана `paths.old` — подтягивает старые переводы
+| Элемент | Пример | Обработка |
+|---------|--------|-----------|
+| Текст | Обычный текст пассажа | Извлекается |
+| Макросы | `<<set $var = 1>>` | Удаляются полностью |
+| Переходы `->` | `[[текст->цель]]` | Извлекается отображаемый текст |
+| Переходы `\|` | `[[текст\|цель]]` | Извлекается отображаемый текст |
+| Переходы простые | `[[текст]]` | Извлекается текст |
+| HTML теги | `<img src="...">` | Удаляются |
+| Переменные | `$Gold` | Сохраняются в тексте |
+| Команды `set` | `set $var` | Пропускаются |
 
-### 2. TRANSLATE — Перевод
+### Переводчики (Translators)
 
-Переводит непереведённые строки из базы данных.
+Переводят непереведённые строки из базы данных.
+
+| Модуль | Тип | Батчи | Параллельность | Переменные | Контекст | Валидация |
+|--------|-----|-------|----------------|------------|----------|-----------|
+| `openai` | OpenAI API | JSON массив | `workers` потоков | Сохраняет `[var]`, `{var}`, `%(var)s`, `$var` | Учитывает | Проверка переменных, скобок |
+| `google` | Google Translate | `translate_batch` | 1 поток | Пропускает строки с переменными | Не учитывает | Проверка на пустоту и идентичность |
 
 **OpenAI:**
-- Отправляет батчи строк в JSON формате
-- Сохраняет переменные (`[var]`, `{var}`, `%(var)s`)
-- Учитывает контекст (имя персонажа) для стиля речи
-- Параллельные запросы через `workers` потоков
-- Валидация: проверка сохранения переменных, пустых скобок
-- Автоматический ретрай при ошибках
+- Формат запроса: `[{"id": 0, "context": "tara", "original": "Hello"}, ...]`
+- Формат ответа: `[{"id": 0, "translate": "Привет"}, ...]`
+- Валидация: все переменные из оригинала должны быть в переводе
+- Автоматический ретрай при ошибках API
 - Невалидные строки остаются в БД для следующего раунда
+- Настраиваемая температура, модель, задержки
 
-**Google Translate:**
-- Бесплатный, но менее точный
-- Пропускает строки с переменными (Google их ломает)
-- Не учитывает контекст
+**Google:**
+- Бесплатный, без API ключа
+- Пропускает строки с `$var`, `[var]`, `{var}`, `%(var)s`, HTML тегами, макросами `<<...>>`
+- Не учитывает контекст (имя персонажа)
 - Рекомендуется для чернового перевода
 
-### 3. APPLY — Сборка файлов
+### Сборщики (Appliers)
 
-Создаёт готовые `.rpy` файлы перевода на основе шаблонов.
+Создают готовые файлы перевода на основе шаблонов и переводов из БД.
 
-**Процесс:**
-- Читает переводы из базы данных
-- Для каждого файла из `paths.new` создаёт выходной файл
-- Заменяет пустые `""` на переводы из БД
+| Модуль | Формат | Принцип | Без перевода |
+|--------|--------|---------|--------------|
+| `renpy` | Ren'Py .rpy | Замена в структуре шаблона | Оставляет оригинал |
+| `twine` | Twine/SugarCube .html | Замена с маскировкой макросов и переходов | Оставляет оригинал |
+
+**Ren'Py:**
 - Сохраняет структуру оригинального файла
+- Поддерживает все форматы: `old/new`, диалоги, цитированные
+- Ищет перевод с учётом контекста (имя персонажа), fallback без контекста
+- Промежуточные команды (`nvl clear`, `scene`) сохраняются
+
+**Twine:**
+- Декодирует HTML entities → маскирует макросы → маскирует переходы → заменяет текст → восстанавливает макросы → восстанавливает переходы с переводом → кодирует обратно
+- Переходы `[[текст]]` → `[[перевод->текст]]`
+- Переходы `[[текст->цель]]` → `[[перевод->цель]]`
+- Макросы `<<...>>` не переводятся
 
 ## База данных
 
@@ -148,7 +144,7 @@ CREATE TABLE translations (
     translation TEXT,            -- перевод (NULL если не переведено)
     source_lang TEXT NOT NULL,   -- исходный язык
     target_lang TEXT NOT NULL,   -- язык перевода
-    context TEXT DEFAULT '',     -- имя персонажа или пусто
+    context TEXT DEFAULT '',     -- контекст (имя персонажа/пассажа)
     UNIQUE(original, context, source_lang, target_lang)
 );
 ```
@@ -157,6 +153,34 @@ CREATE TABLE translations (
 ```bash
 python latte.py db stats    # Статистика
 python latte.py db vacuum   # Оптимизация
+```
+
+## Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Extract
+        A[Исходные файлы] --> B[Парсер]
+        B --> C[Дедупликация]
+        C --> D[(SQLite)]
+    end
+    
+    subgraph Translate
+        D --> E{Непереведённые?}
+        E -->|Да| F[Батчи]
+        F --> G[Параллельные запросы]
+        G --> H[AI / Google]
+        H --> I[Валидация]
+        I --> J[Сохранение]
+        J --> E
+    end
+    
+    subgraph Apply
+        D --> K[Чтение переводов]
+        K --> L[Шаблоны]
+        L --> M[Подстановка]
+        M --> N[Готовые файлы]
+    end
 ```
 
 ## Структура проекта
@@ -169,20 +193,22 @@ latte/
 │   ├── database.py       # SQLite база данных
 │   └── pipeline.py       # Оркестратор пайплайна
 ├── extractors/
-│   ├── base.py           # Базовый класс экстрактора
-│   └── renpy.py          # Экстрактор Ren'Py .rpy
+│   ├── base.py           # Базовый класс
+│   ├── renpy.py          # Ren'Py .rpy
+│   └── twine.py          # Twine/SugarCube .html
 ├── translators/
-│   ├── base.py           # Базовый класс переводчика
-│   ├── openai.py         # OpenAI переводчик
-│   └── google.py         # Google Translate переводчик
+│   ├── base.py           # Базовый класс
+│   ├── openai.py         # OpenAI
+│   └── google.py         # Google Translate
 └── appliers/
-    ├── base.py           # Базовый класс сборщика
-    └── renpy.py          # Сборщик Ren'Py .rpy
+    ├── base.py           # Базовый класс
+    ├── renpy.py          # Ren'Py .rpy
+    └── twine.py          # Twine/SugarCube .html
 ```
 
 ## Добавление новых модулей
 
-### Новый экстрактор
+### Экстрактор
 
 Создать `extractors/myformat.py`:
 
@@ -191,9 +217,9 @@ from extractors.base import BaseExtractor
 
 class MyformatExtractor(BaseExtractor):
     def run(self, **kwargs) -> int:
-        # Извлечь строки из своего формата
-        # Сохранить через self.db.insert_batch(entries)
-        return count
+        entries = [...]  # список dict с original, context
+        normalized = [self._entry(original=e['original'], context=e['context']) for e in entries]
+        return self.db.insert_batch(normalized)
 ```
 
 Прописать в конфиге:
@@ -202,7 +228,7 @@ pipeline:
   extractor: myformat
 ```
 
-### Новый переводчик
+### Переводчик
 
 Создать `translators/myapi.py`:
 
@@ -211,12 +237,13 @@ from translators.base import BaseTranslator
 
 class MyapiTranslator(BaseTranslator):
     def run(self, **kwargs) -> dict:
-        # Перевести через свой API
-        # Обновить через self.db.update_batch(updates)
+        for batch in self._get_batches():
+            updates = self._translate(batch)
+            self.db.update_batch(updates)
         return self.db.stats()
 ```
 
-### Новый сборщик
+### Сборщик
 
 Создать `appliers/myformat.py`:
 
@@ -225,7 +252,8 @@ from appliers.base import BaseApplier
 
 class MyformatApplier(BaseApplier):
     def run(self, **kwargs) -> int:
-        # Собрать файлы в своём формате
+        translations = self.db.get_translated(self.source_lang, self.target_lang)
+        # создать выходные файлы
         return files_count
 ```
 
@@ -233,7 +261,8 @@ class MyformatApplier(BaseApplier):
 
 ---
 
-Modular tool for game resource translation with AI support.
+<details open>
+<summary>🇬🇧 English</summary>
 
 ## Installation
 
@@ -256,7 +285,7 @@ source:
   target_lang: ru       # Target language
 
 paths:
-  new: ./new_tl         # New Ren'Py files (templates)
+  new: ./new_tl         # New files from Ren'Py (templates)
   old: ./old_tl         # Old translations (optional)
   output: ./output      # Output directory
   database: ./translations.db  # Translation database
@@ -275,97 +304,90 @@ translator:
 ## Usage
 
 ```bash
-# Full pipeline
-python latte.py all
-
-# Individual stages
-python latte.py extract -s ./new_tl -o ./old_tl
-python latte.py translate
-python latte.py apply -t ./output
-
-# View statistics
-python latte.py db stats
+python latte.py all                                    # Full pipeline
+python latte.py extract -s ./new_tl -o ./old_tl        # Extract strings
+python latte.py translate                              # Translate
+python latte.py apply -t ./output                      # Assemble files
+python latte.py db stats                               # Database stats
 ```
 
-## Pipeline
+## Modules
 
-```mermaid
-flowchart TD
-    subgraph Extract
-        A[.rpy files] --> B[Ren'Py Parser]
-        B --> C[Deduplication]
-        B --> D[Skip variables]
-        C --> E[(SQLite)]
-        D --> E
-    end
-    
-    subgraph Translate
-        E --> F{Untranslated?}
-        F -->|Yes| G[Form batches]
-        G --> H[Parallel requests]
-        H --> I[AI / Google]
-        I --> J[Validation]
-        J --> K[Save to DB]
-        K --> F
-    end
-    
-    subgraph Apply
-        E --> L[Read translations]
-        L --> M[.rpy templates]
-        M --> N[Insert translations]
-        N --> O[Complete .rpy files]
-    end
-```
+### Extractors
 
-## Stages
+Extract strings from source files and save to database.
 
-### 1. EXTRACT — Extract strings
+| Module | Format | Files | Context | Variables | Old translations |
+|--------|--------|-------|---------|-----------|------------------|
+| `renpy` | Ren'Py .rpy | `.rpy` | Character name | Skips `[var]`, `{var}`, `%(var)s` | Merge by `text+context` key |
+| `twine` | Twine/SugarCube | `.html` | Passage name | Keeps `$var` in text | Not supported |
 
-Parses `.rpy` files and saves strings to the database.
+**Ren'Py — supported formats:**
 
-**Formats the parser understands:**
+| Pattern | Example | Lines |
+|---------|---------|-------|
+| `old/new` | `old "text"` / `new "text"` | 2 |
+| Dialogue | `# name "text"` / `name "text"` | 2 |
+| Dialogue with command | `# name "text"` / command / `name "text"` | 3 |
+| Quoted | `# "text"` / `"text"` | 2 |
+| Quoted with command | `# "text"` / command / `"text"` | 3 |
 
-| Type | Example | Context |
-|------|---------|---------|
-| `old/new` | `old "Start Game"` / `new ""` | — |
-| Dialogues | `# tara "Hello"` / `tara ""` | `tara` |
-| Strings | `# "Menu"` / `""` | — |
+**Twine — supported formats:**
 
-**What it does:**
-- Extracts original text and translation (if available)
-- Saves character name as context
-- Skips strings consisting only of variables (`[var]`, `{var}`)
-- Removes duplicates (same text + context)
-- If `paths.old` is specified, pulls in old translations
+| Element | Example | Processing |
+|---------|---------|-------------|
+| Text | Regular passage text | Extracted |
+| Macros | `<<set $var = 1>>` | Fully removed |
+| Links `->` | `[[text->target]]` | Display text extracted |
+| Links `\|` | `[[text\|target]]` | Display text extracted |
+| Simple links | `[[text]]` | Text extracted |
+| HTML tags | `<img src="...">` | Removed |
+| Variables | `$Gold` | Kept in text |
+| `set` commands | `set $var` | Skipped |
 
-### 2. TRANSLATE — Translation
+### Translators
 
-Translates untranslated strings from the database.
+Translate untranslated strings from database.
+
+| Module | Type | Batches | Parallel | Variables | Context | Validation |
+|--------|------|---------|----------|-----------|---------|------------|
+| `openai` | OpenAI API | JSON array | `workers` threads | Preserves `[var]`, `{var}`, `%(var)s`, `$var` | Uses | Variables, brackets |
+| `google` | Google Translate | `translate_batch` | 1 thread | Skips strings with variables | Ignores | Empty/identical check |
 
 **OpenAI:**
-- Sends batches of strings in JSON format
-- Preserves variables (`[var]`, `{var}`, `%(var)s`)
-- Takes context (character name) into account for speech style
-- Parallel requests via `workers` threads
-- Validation: checks preservation of variables, empty brackets
-- Automatic retry on errors
+- Request format: `[{"id": 0, "context": "tara", "original": "Hello"}, ...]`
+- Response format: `[{"id": 0, "translate": "Привет"}, ...]`
+- Validation: all variables from original must be in translation
+- Automatic retry on API errors
 - Invalid strings remain in DB for next round
+- Configurable temperature, model, delays
 
-**Google Translate:**
-- Free but less accurate
-- Skips strings with variables (Google breaks them)
-- Does not consider context
+**Google:**
+- Free, no API key needed
+- Skips strings with `$var`, `[var]`, `{var}`, `%(var)s`, HTML tags, macros `<<...>>`
+- Does not use context (character name)
 - Recommended for rough/draft translation
 
-### 3. APPLY — Assemble files
+### Appliers
 
-Creates ready-to-use `.rpy` translation files based on templates.
+Create ready-to-use translation files based on templates and DB translations.
 
-**Process:**
-- Reads translations from the database
-- Creates output file for each file from `paths.new`
-- Replaces empty `""` with translations from DB
-- Preserves the structure of the original file
+| Module | Format | Method | No translation |
+|--------|--------|--------|----------------|
+| `renpy` | Ren'Py .rpy | Replace in template structure | Keeps original |
+| `twine` | Twine/SugarCube .html | Replace with macro/link masking | Keeps original |
+
+**Ren'Py:**
+- Preserves original file structure
+- Supports all formats: `old/new`, dialogues, quoted
+- Looks up translation with context (character name), fallback without context
+- Intermediate commands (`nvl clear`, `scene`) preserved
+
+**Twine:**
+- Decode HTML entities → mask macros → mask links → replace text → restore macros → restore links with translation → encode back
+- Links `[[text]]` → `[[translation->text]]`
+- Links `[[text->target]]` → `[[translation->target]]`
+- Macros `<<...>>` are not translated
 
 ## Database
 
@@ -378,7 +400,7 @@ CREATE TABLE translations (
     translation TEXT,            -- translation (NULL if not translated)
     source_lang TEXT NOT NULL,   -- source language
     target_lang TEXT NOT NULL,   -- target language
-    context TEXT DEFAULT '',     -- character name or empty
+    context TEXT DEFAULT '',     -- context (character/passage name)
     UNIQUE(original, context, source_lang, target_lang)
 );
 ```
@@ -387,6 +409,34 @@ CREATE TABLE translations (
 ```bash
 python latte.py db stats    # Statistics
 python latte.py db vacuum   # Optimization
+```
+
+## Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Extract
+        A[Source files] --> B[Parser]
+        B --> C[Deduplication]
+        C --> D[(SQLite)]
+    end
+    
+    subgraph Translate
+        D --> E{Untranslated?}
+        E -->|Yes| F[Batches]
+        F --> G[Parallel requests]
+        G --> H[AI / Google]
+        H --> I[Validation]
+        I --> J[Save]
+        J --> E
+    end
+    
+    subgraph Apply
+        D --> K[Read translations]
+        K --> L[Templates]
+        L --> M[Insert]
+        M --> N[Output files]
+    end
 ```
 
 ## Project Structure
@@ -399,20 +449,22 @@ latte/
 │   ├── database.py       # SQLite database
 │   └── pipeline.py       # Pipeline orchestrator
 ├── extractors/
-│   ├── base.py           # Base extractor class
-│   └── renpy.py          # Ren'Py .rpy extractor
+│   ├── base.py           # Base class
+│   ├── renpy.py          # Ren'Py .rpy
+│   └── twine.py          # Twine/SugarCube .html
 ├── translators/
-│   ├── base.py           # Base translator class
-│   ├── openai.py         # OpenAI translator
-│   └── google.py         # Google Translate translator
+│   ├── base.py           # Base class
+│   ├── openai.py         # OpenAI
+│   └── google.py         # Google Translate
 └── appliers/
-    ├── base.py           # Base applier class
-    └── renpy.py          # Ren'Py .rpy applier
+    ├── base.py           # Base class
+    ├── renpy.py          # Ren'Py .rpy
+    └── twine.py          # Twine/SugarCube .html
 ```
 
 ## Adding New Modules
 
-### New Extractor
+### Extractor
 
 Create `extractors/myformat.py`:
 
@@ -421,9 +473,9 @@ from extractors.base import BaseExtractor
 
 class MyformatExtractor(BaseExtractor):
     def run(self, **kwargs) -> int:
-        # Extract strings from your format
-        # Save via self.db.insert_batch(entries)
-        return count
+        entries = [...]  # list of dicts with original, context
+        normalized = [self._entry(original=e['original'], context=e['context']) for e in entries]
+        return self.db.insert_batch(normalized)
 ```
 
 Set in config:
@@ -432,7 +484,7 @@ pipeline:
   extractor: myformat
 ```
 
-### New Translator
+### Translator
 
 Create `translators/myapi.py`:
 
@@ -441,12 +493,13 @@ from translators.base import BaseTranslator
 
 class MyapiTranslator(BaseTranslator):
     def run(self, **kwargs) -> dict:
-        # Translate using your API
-        # Update via self.db.update_batch(updates)
+        for batch in self._get_batches():
+            updates = self._translate(batch)
+            self.db.update_batch(updates)
         return self.db.stats()
 ```
 
-### New Applier
+### Applier
 
 Create `appliers/myformat.py`:
 
@@ -455,6 +508,9 @@ from appliers.base import BaseApplier
 
 class MyformatApplier(BaseApplier):
     def run(self, **kwargs) -> int:
-        # Assemble files in your format
+        translations = self.db.get_translated(self.source_lang, self.target_lang)
+        # create output files
         return files_count
 ```
+
+</details>

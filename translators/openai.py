@@ -225,13 +225,15 @@ Return ONLY the JSON array, nothing else."""
     
     @staticmethod
     def _valid(original: str, translation: str) -> bool:
-        """Validate translation"""
         if not translation or not translation.strip():
             return False
         
         vars_orig = set()
+        # Ren'Py переменные
         for p in [r'\[.*?\]', r'\{.*?\}', r'%\(.*?\)[sd]']:
             vars_orig.update(re.findall(p, original))
+        # Twine переменные
+        vars_orig.update(re.findall(r'\$[a-zA-Z_]\w*', original))
         
         for v in vars_orig:
             if v not in translation:

@@ -20,9 +20,8 @@ class TwineExtractor(BaseExtractor):
 
     IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.tiff', '.tif'}
 
-    def run(self, source_dir: str = None, old_dir: str = None, **kwargs) -> int:
+    def run(self, source_dir: str = None, **kwargs) -> int:
         source_dir = source_dir or self.config['paths']['new']
-        old_dir = old_dir or self.config['paths'].get('old')
 
         html_files = self._find_html(source_dir)
         if not html_files:
@@ -37,12 +36,6 @@ class TwineExtractor(BaseExtractor):
             entries.extend(file_entries)
 
         print(f"Total: {len(entries)} strings")
-
-        if old_dir and os.path.exists(old_dir):
-            old_html_files = self._find_html(old_dir)
-            if old_html_files:
-                merged = self._merge(entries, str(old_html_files[0]))
-                print(f"Merged: {merged} existing translations")
 
         seen = set()
         normalized = []
@@ -89,30 +82,19 @@ class TwineExtractor(BaseExtractor):
             if not inner.strip():
                 continue
 
-            # === ЭТАПЫ ОБРАБОТКИ ===
-
-            # 1. unescape HTML entities
             decoded = html_module.unescape(inner)
-
-            # 2. Удаляем ВСЕ макросы <<...>> полностью
             decoded = re.sub(r'<<.*?>>', '\n', decoded)
-
-            # 3. Удаляем HTML теги
             decoded = re.sub(r'<[^>]+>', '\n', decoded)
 
-            # 4. Разбиваем на строки
             lines = decoded.split('\n')
 
             for line in lines:
-                # 5. Пропускаем мусорные строки
                 if self._skip_line(line):
                     continue
 
-                # 6. Извлекаем текст из ссылок [[...]]
                 parts = self._extract_parts(line)
 
                 for part in parts:
-                    # 7. Финальная очистка
                     final = self._final_clean(part)
                     if final:
                         entries.append(self._entry(
@@ -129,7 +111,6 @@ class TwineExtractor(BaseExtractor):
         if not line:
             return True
 
-        # img
         if line.startswith('img '):
             if line.endswith('}'):
                 return True
@@ -138,21 +119,17 @@ class TwineExtractor(BaseExtractor):
                     return True
             return True
 
-        # span style
         if line.startswith('span '):
             parts = line.split()
             if len(parts) == 2 and parts[1] == 'style':
                 return True
 
-        # style
         if line.startswith('style ') or line == 'style':
             return True
 
-        # set $ команды
         if re.match(r'set\s+\$', line):
             return True
 
-        # Чистая переменная
         if re.match(r'^\$[a-zA-Z_]\w*$', line):
             return True
 
@@ -160,7 +137,6 @@ class TwineExtractor(BaseExtractor):
 
     @staticmethod
     def _extract_parts(line: str) -> list:
-        """Извлекает текст вне ссылок и отображаемый текст из [[...]]"""
         results = []
         pattern = re.compile(r'\[\[(.+?)\]\]')
         last_end = 0
@@ -199,7 +175,6 @@ class TwineExtractor(BaseExtractor):
 
         text = text.strip()
 
-        # Парные символы с краёв
         PAIRS = [
             ('"', '"'), ("'", "'"), ('„', '"'), ('"', '"'), ('«', '»'),
             ('(', ')'), ('[', ']'), ('{', '}'),
@@ -226,41 +201,20 @@ class TwineExtractor(BaseExtractor):
         if not text:
             return ''
 
-        # Удаляем числа с +/- и >>/<< в начале и конце
         text = re.sub(r'^[\+\-\d\s>]+', '', text)
         text = re.sub(r'[\+\-\d\s<]+$', '', text)
         text = text.strip()
 
-        # Строка из одного повторяющегося символа
         if len(text) >= 3 and len(set(text)) == 1:
             return ''
 
         if not text:
             return ''
 
-        # Только число
         if re.match(r'^[\+\-\d\s\.\,\-]+$', text):
             return ''
 
-        # Только пунктуация без букв
         if re.match(r'^[\s\W_]+$', text) and not re.search(r'[a-zA-Z]{3,}', text):
             return ''
 
         return text
-
-    def _merge(self, entries: list, old_path: str) -> int:
-        if not os.path.exists(old_path):
-            return 0
-        old_entries = self._parse_file(old_path)
-        old_map = {}
-        for e in old_entries:
-            key = f"{e['original']}|{e['context']}"
-            if e.get('translation') and e['translation'] != e['original']:
-                old_map[key] = e['translation']
-        merged = 0
-        for e in entries:
-            key = f"{e['original']}|{e['context']}"
-            if not e.get('translation') and key in old_map:
-                e['translation'] = old_map[key]
-                merged += 1
-        return merged
