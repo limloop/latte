@@ -7,16 +7,17 @@ import re
 import html as html_module
 from pathlib import Path
 from appliers.base import BaseApplier
+from extractors.twine import (
+    process_passage_text,
+    skip_line,
+    extract_parts,
+    final_clean,
+    SKIP_PASSAGES
+)
 
 
 class TwineApplier(BaseApplier):
     """Apply translations to Twine/SugarCube HTML"""
-    
-    SKIP_PASSAGES = {
-        'StoryInit', 'StoryReady', 'PassageReady', 'PassageDone',
-        'PassageHeader', 'PassageFooter', 'StoryMenu', 'StoryBanner',
-        'StoryCaption', 'StorySubtitle', 'StoryTitle', 'StoryAuthor'
-    }
     
     def run(self, target_dir: str = None, **kwargs) -> int:
         target_dir = target_dir or self.config['paths']['output']
@@ -69,7 +70,7 @@ class TwineApplier(BaseApplier):
             name_match = re.search(r'name="([^"]*)"', attrs)
             name = name_match.group(1) if name_match else ''
             
-            if name in self.SKIP_PASSAGES:
+            if name in SKIP_PASSAGES:
                 return match.group(0)
             
             translated = self._translate_passage(inner, lookup)
@@ -86,80 +87,156 @@ class TwineApplier(BaseApplier):
             f.write(result)
     
     def _translate_passage(self, inner: str, lookup: dict) -> str:
-        """Перевести содержимое пассажа"""
+        """Перевести содержимое пассажа, работая как экстрактор"""
         
-        # Шаг 1: unescape HTML entities
+        # Шаг 1: unescape HTML entities (КАК В ЭКСТРАКТОРЕ)
         decoded = html_module.unescape(inner)
+        decoded = html_module.unescape(decoded)
         
-        # Шаг 2: маскируем макросы <<...>> (ДО ВСЕГО)
-        decoded, macros = self._mask_macros(decoded)
-        
-        # Шаг 3: маскируем ссылки [[...]]
-        decoded, links = self._mask_links(decoded)
-        
-        # Шаг 4: переводим текст прямым replace
-        for original, translation in lookup.items():
-            if original in decoded:
-                decoded = decoded.replace(original, translation)
-        
-        # Шаг 5: восстанавливаем макросы (оригиналы)
-        for key, original in macros.items():
-            decoded = decoded.replace(key, original)
-        
-        # Шаг 6: восстанавливаем ссылки (с переводом display)
-        for key, link in links.items():
-            display = link['display']
-            target = link['target']
-            translated_display = lookup.get(display, display)
-            new_link = f'[[{translated_display}->{target}]]'
-            decoded = decoded.replace(key, new_link)
-        
-        # Шаг 7: escape обратно (но не трогаем кавычки)
-        encoded = html_module.escape(decoded, quote=False)
-        
-        return encoded
-    
-    def _mask_macros(self, text: str) -> tuple:
-        """Заменить макросы <<...>> на метки"""
+        # Шаг 2: удаляем макросы <<...>> (КАК В ЭКСТРАКТОРЕ)
+        # Но сохраняем их для восстановления
         macros = {}
-        counter = 0
+        macro_counter = 0
         
-        def replace_macro(match):
-            nonlocal counter
-            key = f'__MACRO_{counter}__'
+        def save_macro(match):
+            nonlocal macro_counter
+            key = f'__MACRO_{macro_counter}__'
             macros[key] = match.group(0)
-            counter += 1
+            macro_counter += 1
             return key
         
-        # Используем .*? чтобы ловить макросы с > внутри
-        result = re.sub(r'<<.*?>>', replace_macro, text)
-        return result, macros
-    
-    def _mask_links(self, text: str) -> tuple:
-        """Заменить ссылки [[...]] на метки"""
-        links = {}
-        counter = 0
+        decoded = re.sub(r'<<.*?>>', save_macro, decoded)
         
-        def replace_link(match):
-            nonlocal counter
-            inner = match.group(1).strip()
+        # Шаг 3: удаляем HTML теги (КАК В ЭКСТРАКТОРЕ)
+        # Но сохраняем их для восстановления
+        tags = {}
+        tag_counter = 0
+        
+        def save_tag(match):
+            nonlocal tag_counter
+            key = f'__TAG_{tag_counter}__'
+            tags[key] = match.group(0)
+            tag_counter += 1
+            return f'\n{key}\n'
+        
+        decoded = re.sub(r'<[^>]+>', save_tag, decoded)
+        
+        # Шаг 3.5: сохраняем ссылки [[...]]
+        links = {}
+        link_counter = 0
+        
+        def save_link(match):
+            nonlocal link_counter
+            inner_text = match.group(1).strip()
             
-            if '->' in inner:
-                display, target = inner.split('->', 1)
+            # Разбираем ссылку
+            if '->' in inner_text:
+                display, target = inner_text.split('->', 1)
                 display = display.strip()
                 target = target.strip()
-            elif '|' in inner:
-                display, target = inner.split('|', 1)
+            elif '|' in inner_text:
+                display, target = inner_text.split('|', 1)
                 display = display.strip()
                 target = target.strip()
             else:
-                display = inner
-                target = inner
+                # Простая ссылка [[text]] — target = text
+                display = inner_text
+                target = inner_text
             
-            key = f'__LINK_{counter}__'
-            links[key] = {'display': display, 'target': target}
-            counter += 1
+            key = f'__LINK_{link_counter}__'
+            links[key] = {
+                'display': display,
+                'target': target
+            }
+            link_counter += 1
             return key
         
-        result = re.sub(r'\[\[(.+?)\]\]', replace_link, text)
-        return result, links
+        decoded = re.sub(r'\[\[(.+?)\]\]', save_link, decoded)
+        
+        # Шаг 4: разбиваем на строки и обрабатываем КАК В ЭКСТРАКТОРЕ
+        lines = decoded.split('\n')
+        result_lines = []
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Если это сохранённый тег — восстанавливаем как есть
+            if stripped in tags:
+                result_lines.append(tags[stripped])
+                continue
+            
+            # Пропускаем мусор
+            if skip_line(stripped):
+                result_lines.append(line)
+                continue
+            
+            # Извлекаем части (текст и ссылки)
+            # Теперь ссылки уже заменены на __LINK_X__, так что extract_parts 
+            # вернёт только чистый текст
+            parts = extract_parts(stripped)
+            
+            # Переводим каждую часть
+            translated_parts = []
+            for part in parts:
+                cleaned = final_clean(part)
+                
+                if cleaned in lookup:
+                    # Нашли перевод — заменяем
+                    translated = lookup[cleaned]
+                    # Если в оригинале было оформление (кавычки, ...), сохраняем
+                    if part != cleaned:
+                        # Находим, чем отличается оригинал от очищенного
+                        prefix = ''
+                        suffix = ''
+                        if part.startswith('...') and not cleaned.startswith('...'):
+                            prefix = '...'
+                        # Простые кавычки
+                        if part.startswith('"') and part.endswith('"'):
+                            translated = f'{prefix}"{translated}"'
+                        elif part.startswith("'") and part.endswith("'"):
+                            translated = f"{prefix}'{translated}'"
+                        else:
+                            translated = prefix + translated
+                    translated_parts.append(translated)
+                else:
+                    # Нет перевода — оставляем как есть
+                    translated_parts.append(part)
+            
+            # Собираем строку обратно
+            result_line = stripped
+            for original_part, translated_part in zip(parts, translated_parts):
+                result_line = result_line.replace(original_part, translated_part, 1)
+            
+            result_lines.append(result_line)
+        
+        # Собираем текст обратно
+        decoded = '\n'.join(result_lines)
+        
+        # Шаг 5: восстанавливаем ссылки с переводом
+        for key, link in links.items():
+            display = link['display']
+            target = link['target']
+            
+            # Очищаем display для поиска перевода
+            clean_display = final_clean(display)
+            
+            # Ищем перевод для display
+            translated_display = lookup.get(clean_display, display)
+            
+            # Сохраняем префикс ... если был
+            if display.startswith('...') and not translated_display.startswith('...'):
+                translated_display = '...' + translated_display
+            
+            # Всегда создаём ссылку в формате [[перевод->оригинал]]
+            new_link = f'[[{translated_display}->{target}]]'
+            
+            decoded = decoded.replace(key, new_link)
+        
+        # Восстанавливаем макросы
+        for key, original in macros.items():
+            decoded = decoded.replace(key, original)
+        
+        # Escape обратно в HTML entities
+        encoded = html_module.escape(decoded, quote=False)
+        
+        return encoded
