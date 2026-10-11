@@ -17,6 +17,8 @@ paths:
 
 translator:
   openai:
+    proxy: ""
+    timeout: 60
     api_key: ""
     base_url: ""
     model: gpt-4-turbo-preview
@@ -28,6 +30,7 @@ translator:
     delay_min: 0.1
     delay_max: 0.5
     reasoning: false
+    reasoning_effort: minimal
 
   google:
     batch: 50
